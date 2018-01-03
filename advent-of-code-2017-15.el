@@ -123,8 +123,8 @@
 
 (defun match-p (pair)
   (when pair
-      (equal (logand #xFFFF0000 (lsh (car pair) 16))
-             (logand #xFFFF0000 (lsh (cdr pair) 16)))))
+      (equal (logand #xFFFF (car pair))
+             (logand #xFFFF (cdr pair)))))
 
 (ert-deftest match-p-test ()
   (should (match-p '(245556042 . 1431495498))))
