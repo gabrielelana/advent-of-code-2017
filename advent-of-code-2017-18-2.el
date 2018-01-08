@@ -31,6 +31,18 @@
 (defun make-runtime (send-buffer receive-buffer process-id)
   (list 0 send-buffer receive-buffer `(,(intern "p") ,process-id)))
 
+(defun instruction-pointer (runtime)
+  (nth 0 runtime))
+
+(defun send-buffer (runtime)
+  (nth 1 runtime))
+
+(defun receive-buffer (runtime)
+  (nth 2 runtime))
+
+(defun registers (runtime)
+  (nth 3 runtime))
+
 (defun register-set (runtime r v)
   (setf (nth 3 runtime) (plist-put (nth 3 runtime) r v))
   runtime)
@@ -46,31 +58,37 @@
   (setf (nth 0 runtime) (+ (or n 1) (nth 0 runtime)))
   runtime)
 
-;; set X Y sets register X to the value of Y.
+;;; set X Y sets register X to the value of Y.
 (defun execute-set (runtime r1 r2)
   (thread-first runtime
     (register-set r1 (register-get runtime r2))
     (increment-instruction-pointer)))
 
-;; add X Y increases register X by the value of Y.
+;;; add X Y increases register X by the value of Y.
 (defun execute-add (runtime r1 r2)
   (thread-first runtime
     (register-set r1 (+ (register-get runtime r1) (register-get runtime r2)))
     (increment-instruction-pointer)))
 
-;; mul X Y sets register X to the result of multiplying the value contained in register X by the value of Y.
+;;; mul X Y sets register X to the result of multiplying the value
+;;; contained in register X by the value of Y.
 (defun execute-mul (runtime r1 r2)
   (thread-first runtime
     (register-set r1 (* (register-get runtime r1) (register-get runtime r2)))
     (increment-instruction-pointer)))
 
-;; mod X Y sets register X to the remainder of dividing the value contained in register X by the value of Y (that is, it sets X to the result of X modulo Y).
+;;; mod X Y sets register X to the remainder of dividing the value
+;;; contained in register X by the value of Y (that is, it sets X to
+;;; the result of X modulo Y).
 (defun execute-mod (runtime r1 r2)
   (thread-first runtime
     (register-set r1 (mod (register-get runtime r1) (register-get runtime r2)))
     (increment-instruction-pointer)))
 
-;; jgz X Y jumps with an offset of the value of Y, but only if the value of X is greater than zero. (An offset of 2 skips the next instruction, an offset of -1 jumps to the previous instruction, and so on.)
+;;; jgz X Y jumps with an offset of the value of Y, but only if the
+;;; value of X is greater than zero. (An offset of 2 skips the next
+;;; instruction, an offset of -1 jumps to the previous instruction, and
+;;; so on.)
 (defun execute-jgz (runtime r1 r2)
   (if (/= (register-get runtime r1) 0)
       (increment-instruction-pointer runtime (register-get runtime r2))
@@ -140,42 +158,28 @@
   (with-current-buffer pipe
     (= (buffer-size) 0)))
 
-;;; TODO: waiting
 (defun waiting-p (runtime)
   (eq t (register-get runtime :waiting)))
 
-;;; TODO: stuck
 (defun stuck-p (runtime)
-  (eq t (register-get runtime :stuck)))
+  (and (waiting-p runtime) (pipe-empty-p (receive-buffer runtime))))
 
 (defun finished-p (runtime instructions)
   (not (fetch-instruction runtime instructions)))
 
 (defun next-p (runtime instructions)
   (and (not (finished-p runtime instructions))
-       (not (waiting-p runtime))))
-
-(defun over-p (runtime instructions)
-  (and (not (finished-p runtime instructions))
        (not (stuck-p runtime))))
 
 (defun deadlock-p (process-0 process-1 instructions)
-  (and (pipe-empty-p (nth 2 process-0)) (pipe-empty-p (nth 2 process-1))))
-
-(defun still-at-p (runtime instruction-pointer)
-  (= instruction-pointer (car runtime)))
+  (and (not (next-p process-0 instructions)) (not (next-p process-1 instructions))))
 
 (defun run (runtime instructions)
-  (let (instruction (started-at (car runtime)))
-    (setq runtime (register-set runtime :stuck nil))
-    (setq runtime (register-set runtime :waiting nil))
+  (let (instruction)
     (while (next-p runtime instructions)
-      (setq instruction (fetch-instruction runtime instructions))
-      (setq registers-before (seq-copy (nth 3 runtime)))
-      (setq runtime (execute-instruction runtime instruction))
-      (message "%S -> %S -> %S " instruction registers-before (nth 3 runtime)))
-    (when (still-at-p runtime started-at)
-      (setq runtime (register-set runtime :stuck t))))
+      (setq instruction (fetch-instruction runtime instructions)
+            registers-before (seq-copy (registers runtime))
+            runtime (execute-instruction runtime instruction))))
   runtime)
 
 (defun sample-instructions ()
@@ -194,12 +198,8 @@
        (process-0 (make-runtime buffer-0 buffer-1 0))
        (process-1 (make-runtime buffer-1 buffer-0 1))
        (instructions (instructions)))
-  (setq process-0 (run process-0 instructions)
-        process-1 (run process-1 instructions))
   (while (not (deadlock-p process-0 process-1 instructions))
-  ;; (while (and (not (pipe-empty-p buffer-0)))
     (setq process-0 (run process-0 instructions)
-          process-1 (run process-1 instructions)))
-  (message "process-0: %S" process-0)
-  (message "process-1: %S" process-1)
+          process-1 (run process-1 instructions))
+    (message "process-1: %S" process-1))
   (register-get process-1 :sent-count))
